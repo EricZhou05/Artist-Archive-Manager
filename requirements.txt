@@ -4,5 +4,5 @@ rich
 pyzipper
 python-dateutil
 psd-tools
-pillow
 pymupdf
+pillow
