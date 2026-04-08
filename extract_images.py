@@ -132,27 +132,24 @@ def generate_preview(source_dir, target_dir):
                     accepted_tokens.append(main_date)
                 
                 def is_token_redundant(token, accepted):
-                    def check_single(t):
-                        if not t: return True
-                        # 1. 完全一致则冗余 (忽略大小写)
-                        if any(t.lower() == acc.lower() for acc in accepted):
-                            return True
-                        # 2. 如果包含字母/汉字等非数字特殊字符，且为已接受词元的子串，则冗余
-                        if re.search(r'[^\W\d_]', t):
-                            for acc in accepted:
-                                if t.lower() in acc.lower():
-                                    return True
-                        return False
-
-                    if check_single(token):
+                    if not token: 
                         return True
-                        
-                    # 3. 尝试对含有 _ 或 - 的词元切分，如果切分后的所有部分均冗余，则整体也冗余
-                    if '_' in token or '-' in token:
-                        parts = re.split(r'[_\-]', token)
-                        if parts and all(check_single(p) for p in parts if p):
+                    
+                    token_lower = token.lower()
+                    
+                    # 1. 完全一致则冗余 (忽略大小写)
+                    for acc in accepted:
+                        if token_lower == acc.lower():
                             return True
                             
+                    # 2. 对于较长的文字块（包含字母或汉字/假名等），进行宽容的相互包含去重
+                    if len(token) >= 2 and re.search(r'[^\W\d_]', token):
+                        for acc in accepted:
+                            acc_lower = acc.lower()
+                            # 只要文字块相互包含，即视为冗余（剔除重复或被包含的子文字块）
+                            if token_lower in acc_lower or (len(acc) >= 2 and acc_lower in token_lower):
+                                return True
+                                
                     return False
 
                 # 处理每个片段，进行清理
@@ -169,21 +166,28 @@ def generate_preview(source_dir, target_dir):
                         if main_date and cleaned == main_date and (not is_file or len(segments) > 1):
                             continue
                         
-                        # 按空格切分为词元，进行跨片段的深度去重处理
-                        tokens = re.split(r'\s+', cleaned)
-                        segment_accepted_tokens = []
+                        # 用带捕获组的正则切分，保留原始分隔符 (空格, _, -)
+                        parts = re.split(r'([\s_\-]+)', cleaned)
+                        kept_parts = []
+                        last_sep = ""
                         
-                        for token in tokens:
-                            if not token:
-                                continue
+                        for idx, part in enumerate(parts):
+                            # 偶数索引为有效词元，奇数索引为分隔符
+                            if idx % 2 == 0:
+                                token = part
+                                if not token:
+                                    continue
                                 
-                            if not is_token_redundant(token, accepted_tokens):
-                                accepted_tokens.append(token)
-                                segment_accepted_tokens.append(token)
+                                if not is_token_redundant(token, accepted_tokens):
+                                    accepted_tokens.append(token)
+                                    if kept_parts:
+                                        kept_parts.append(last_sep if last_sep else " ")
+                                    kept_parts.append(token)
+                            else:
+                                last_sep = part
                         
-                        if segment_accepted_tokens:
-                            # 用空格重新连接该片段保留的内容
-                            final_parts.append(" ".join(segment_accepted_tokens))
+                        if kept_parts:
+                            final_parts.append("".join(kept_parts))
 
                 # 过滤连续重复的片段（兜底）
                 unique_parts = []
