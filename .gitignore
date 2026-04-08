@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# PyCharm
+.idea/
+
+# Custom logs or temp files
+decryption_log.txt
+preview_list.txt
+decryption_log.txt
+preview_list.txt
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
