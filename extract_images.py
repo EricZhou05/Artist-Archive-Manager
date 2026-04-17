@@ -167,7 +167,8 @@ def generate_preview(source_dir, target_dir):
                             continue
                         
                         # 用带捕获组的正则切分，保留原始分隔符 (空格, _, -)
-                        parts = re.split(r'([\s_\-]+)', cleaned)
+                        # 优化：不切分数字之间的连字符（如 19-00 视为一个词元），防止其被拆分为 19 和 00 导致误判冗余
+                        parts = re.split(r'((?:[\s_]|-(?!\d)|(?<!\d)-)+)', cleaned)
                         kept_parts = []
                         last_sep = ""
                         
@@ -196,13 +197,16 @@ def generate_preview(source_dir, target_dir):
                         unique_parts.append(p)
                 
                 final_stem = "_".join(unique_parts)
+                # 优化：对末尾的单个数字进行补零（如 1 -> 01）
+                final_stem = re.sub(r'(?<!\d)(\d)$', r'0\1', final_stem)
+                
                 suffix = file_path.suffix
                 new_name = final_stem + suffix
                 
                 # 处理同名冲突
                 counter = 1
                 while new_name in used_names or (target_path / new_name).exists():
-                    new_name = f"{final_stem}_{counter}{suffix}"
+                    new_name = f"{final_stem}_{counter:02d}{suffix}"
                     counter += 1
                 
                 used_names.add(new_name)
@@ -229,7 +233,7 @@ def execute_move(preview_data, target_dir):
             stem = dest_path.stem
             suffix = dest_path.suffix
             while dest_path.exists():
-                dest_path = target_path / f"{stem}_{counter}{suffix}"
+                dest_path = target_path / f"{stem}_{counter:02d}{suffix}"
                 counter += 1
                 
             try:
@@ -286,7 +290,18 @@ def main():
     
     # 确认执行
     if not args.run:
-        print("\n[待命] 请检查 'preview_list.txt' 确认命名方案。")
+        # 自动打开预览文件
+        try:
+            if os.name == 'nt':  # Windows
+                os.startfile(preview_file)
+            elif os.name == 'posix':  # macOS / Linux
+                import subprocess
+                opener = 'open' if os.uname().sysname == 'Darwin' else 'xdg-open'
+                subprocess.call([opener, preview_file])
+        except Exception:
+            pass
+
+        print("\n[待命] 请检查 'preview_list.txt' 确认命名方案（已为您自动打开）。")
         confirm = input("\n确认并开始【移动】文件吗？(输入 y 开始 / 其它键退出): ").strip().lower()
         if confirm != 'y':
             print("操作已取消。")
