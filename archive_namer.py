@@ -12,6 +12,13 @@ def format_date(date_str):
     if match:
         year, month, day = match.groups()
         return f"{year}-{int(month):02d}-{int(day):02d}"
+    
+    # 尝试匹配 8位纯数字无分隔日期 (如 20240101)
+    match_8 = re.search(r"((?:19|20)\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])", clean_date)
+    if match_8:
+        year, month, day = match_8.groups()
+        return f"{year}-{month}-{day}"
+        
     return "Unknown"
 
 def smart_recognize(raw_input):
@@ -24,7 +31,7 @@ def smart_recognize(raw_input):
     # 1. 提取平台 []
     platforms_raw = re.findall(r"\[(.*?)\]", raw_input)
     platforms = []
-    known_platforms = ["PIXIV", "FANBOX", "DISCORD", "X", "TWITTER", "BOOTH", "PATREON", "CI-EN"]
+    known_platforms = ["PIXIV", "FANBOX", "DISCORD", "X", "TWITTER", "BOOTH", "PATREON", "CI-EN", "BILIBILI"]
     
     potential_dates = []
     
@@ -53,9 +60,10 @@ def smart_recognize(raw_input):
     artist_id = ids[0] if ids else "Unknown"
 
     # 3. 提取时间范围
-    # 查找类似 (2024.01.02 - 2025.05.19) 或 [2023.10.22]
-    # 正则表达式中增加了对下划线 _ 的匹配支持
-    date_range_match = re.search(r"\(?(\d{4}[.\-/_]\d{1,2}[.\-/_]\d{1,2})\s*[-~至]\s*(\d{4}[.\-/_]\d{1,2}[.\-/_]\d{1,2})\)?", raw_input)
+    # 查找类似 (2024.01.02 - 2025.05.19) 或 [2023.10.22] 或 20240101-20240202
+    # 正则表达式中增加了对下划线 _ 和 8位纯数字的匹配支持
+    date_pattern = r"(\d{4}[.\-/_]\d{1,2}[.\-/_]\d{1,2}|(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))"
+    date_range_match = re.search(fr"\(?{date_pattern}\s*[-~至]\s*{date_pattern}\)?", raw_input)
     
     start_date = "Unknown"
     end_date = "Unknown"
@@ -64,8 +72,8 @@ def smart_recognize(raw_input):
         start_date = format_date(date_range_match.group(1))
         end_date = format_date(date_range_match.group(2))
     else:
-        # 尝试查找单个日期（同样增加下划线支持）
-        single_dates = re.findall(r"(\d{4}[.\-/_]\d{1,2}[.\-/_]\d{1,2})", raw_input)
+        # 尝试查找单个日期（同样增加下划线和 8位纯数字支持）
+        single_dates = re.findall(date_pattern, raw_input)
         if len(single_dates) == 1:
             # 模式一：只识别到一个日期，格式化为 (Unknown - 日期)
             end_date = format_date(single_dates[0])
@@ -105,10 +113,10 @@ def sequential_prompt():
     
     # 1. 平台
     print("选择图集平台 (可输入多个，用空格隔开):")
-    print("1. Pixiv  2. Fanbox  3. Discord  4. X  5. Unknown")
+    print("1. Pixiv  2. Fanbox  3. Discord  4. X  5. Bilibili  6. Unknown")
     choice = input("请输入选项编号或直接输入名称: ").strip()
     
-    mapping = {"1": "Pixiv", "2": "Fanbox", "3": "Discord", "4": "X", "5": "Unknown"}
+    mapping = {"1": "Pixiv", "2": "Fanbox", "3": "Discord", "4": "X", "5": "Bilibili", "6": "Unknown"}
     selected_platforms = []
     for part in choice.split():
         if part in mapping:
