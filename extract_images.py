@@ -10,35 +10,58 @@ from datetime import datetime
 # 日期解析缓存
 DATE_CACHE = {}
 
-# 常见的日期正则模式
-DATE_PATTERNS = [
-    r'(\d{4}[.\-_]\d{1,2}[.\-_]\d{1,2})', # 2023-07-15, 2023.7.15
-    r'(\d{1,2}[.\-_]\d{1,2}[.\-_]\d{2,4})', # 15-07-2023, 23.07.15
-    r'(\d{8})',                           # 20230715
+# 高置信度日期正则模式（包含 4 位年份或8位纯数字）
+HIGH_CONF_DATE_PATTERNS = [
+    r'(\d{4}[.\-_/]\d{1,2}[.\-_/]\d{1,2})', # 2023-07-15, 2023.7.15, 2023_07_15
     r'(\d{4}年\d{1,2}月\d{1,2}日)',       # 2023年7月15日
+    r'(?:^|[^\d])((?:19|20)\d{6})(?:[^\d]|$)', # 20230715
 ]
 
-def extract_date_from_text(text):
+# 低置信度日期正则模式（2位年份，不允许使用 '_' 以防误匹配文件名序号）
+LOW_CONF_DATE_PATTERNS = [
+    r'(\d{2}[.\-/]\d{1,2}[.\-/]\d{1,2})', # 23-07-15, 23.07.15
+    r'(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{2,4})', # 15-07-2023
+]
+
+ALL_DATE_PATTERNS = HIGH_CONF_DATE_PATTERNS + LOW_CONF_DATE_PATTERNS
+
+def parse_date(date_str):
+    """解析日期字符串并验证年份有效范围"""
+    if not date_str:
+        return None
+    try:
+        if date_str.isdigit() and len(date_str) == 8:
+            dt = dateparser.parse(date_str, date_formats=['%Y%m%d'])
+        else:
+            dt = dateparser.parse(date_str, settings={'DATE_ORDER': 'YMD', 'PREFER_DAY_OF_MONTH': 'first'})
+        
+        if dt:
+            current_year = datetime.now().year
+            # 年份范围约束：1900 到 当前年份+1，排除未来年份误判
+            if 1900 <= dt.year <= current_year + 1:
+                return dt.strftime('%Y-%m-%d')
+    except Exception:
+        pass
+    return None
+
+def extract_date_from_text(text, patterns=None):
     """从文本中提取并解析日期，返回 (格式化日期, 原始匹配文本)"""
-    if text in DATE_CACHE:
-        return DATE_CACHE[text]
+    if patterns is None:
+        patterns = ALL_DATE_PATTERNS
+        
+    cache_key = (text, tuple(patterns))
+    if cache_key in DATE_CACHE:
+        return DATE_CACHE[cache_key]
     
-    for pattern in DATE_PATTERNS:
-        match = re.search(pattern, text)
-        if match:
+    for pattern in patterns:
+        for match in re.finditer(pattern, text):
             date_str = match.group(1)
-            # 针对 8 位纯数字特殊处理
-            if date_str.isdigit() and len(date_str) == 8:
-                dt = dateparser.parse(date_str, date_formats=['%Y%m%d'])
-            else:
-                dt = dateparser.parse(date_str, settings={'DATE_ORDER': 'YMD', 'PREFER_DAY_OF_MONTH': 'first'})
-            
-            if dt and 1900 <= dt.year <= 2100:
-                res = dt.strftime('%Y-%m-%d')
-                DATE_CACHE[text] = (res, date_str)
+            res = parse_date(date_str)
+            if res:
+                DATE_CACHE[cache_key] = (res, date_str)
                 return res, date_str
     
-    DATE_CACHE[text] = (None, None)
+    DATE_CACHE[cache_key] = (None, None)
     return None, None
 
 def clean_segment(segment, main_date=None):
@@ -47,31 +70,21 @@ def clean_segment(segment, main_date=None):
         return ""
     
     # 1. 首先尝试移除片段开头的任何有效日期
-    for pattern in DATE_PATTERNS:
+    for pattern in ALL_DATE_PATTERNS:
         match = re.match(pattern, segment)
         if match:
             date_str = match.group(1)
-            if date_str.isdigit() and len(date_str) == 8:
-                dt = dateparser.parse(date_str, date_formats=['%Y%m%d'])
-            else:
-                dt = dateparser.parse(date_str, settings={'DATE_ORDER': 'YMD', 'PREFER_DAY_OF_MONTH': 'first'})
-            
-            if dt and 1900 <= dt.year <= 2100:
+            if parse_date(date_str):
                 segment = segment[match.end():]
                 break
 
     # 2. 如果提供了主日期，则移除片段中所有解析后等于主日期的子串
     if main_date:
-        for pattern in DATE_PATTERNS:
+        for pattern in ALL_DATE_PATTERNS:
             matches = list(re.finditer(pattern, segment))
             for m in reversed(matches):
                 d_str = m.group(1)
-                if d_str.isdigit() and len(d_str) == 8:
-                    dt = dateparser.parse(d_str, date_formats=['%Y%m%d'])
-                else:
-                    dt = dateparser.parse(d_str, settings={'DATE_ORDER': 'YMD', 'PREFER_DAY_OF_MONTH': 'first'})
-                
-                if dt and dt.strftime('%Y-%m-%d') == main_date:
+                if parse_date(d_str) == main_date:
                     segment = segment[:m.start()] + segment[m.end():]
     
     # 压缩连续的空格和分隔符
@@ -79,11 +92,19 @@ def clean_segment(segment, main_date=None):
     return segment.strip(' .-_')
 
 def extract_date_from_segments(segments):
-    """从路径片段中提取第一个识别到的日期（倒序优先）"""
+    """从路径片段中提取日期：高置信度（4位年份）优先全路径倒序查找，其次低置信度"""
+    # 第一轮：在所有片段中（倒序）查找高置信度日期（4位年份）
     for segment in reversed(segments):
-        date_res, _ = extract_date_from_text(segment)
+        date_res, _ = extract_date_from_text(segment, HIGH_CONF_DATE_PATTERNS)
         if date_res:
             return date_res
+            
+    # 第二轮：降级查找低置信度日期
+    for segment in reversed(segments):
+        date_res, _ = extract_date_from_text(segment, LOW_CONF_DATE_PATTERNS)
+        if date_res:
+            return date_res
+            
     return None
 
 def generate_preview(source_dir, target_dir):
